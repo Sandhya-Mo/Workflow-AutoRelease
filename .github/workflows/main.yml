@@ -3,13 +3,13 @@ name: Create Release
 on:
   push:
     tags:
-      - 'v*'  # Triggers on version tags like v1.0.0
+      - "v*.*.*"
 
-jobs:      
-  release:
+jobs:
+  build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3 #clones repo
-      
-      - name: Create Release
-        uses: softprops/action-gh-release@v1 #creates release
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Release
+        uses: softprops/action-gh-release@v2
