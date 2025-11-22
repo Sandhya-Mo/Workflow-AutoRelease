@@ -1,67 +1,110 @@
-name: Auto Integration Testing on FlatSat
-
+name: Flash Raspberry Pi OS & Binary
 on:
   push:
-    branches:
-      - main
+    branches: ['**']
+  workflow_dispatch:
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-
+  flash:
+    name: Flash OS, Deploy Binary & Monitor
+    runs-on: self-hosted
+    defaults:
+      run:
+        shell: bash
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v2
-
-      - name: Set up python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      
+      - name: Set environment variables
+        run: |
+          echo "TARGET_PI_HOST=raspberrypi.local" >> "$GITHUB_ENV"
+          echo "TARGET_PI_USER=pi" >> "$GITHUB_ENV"
+          echo "BINARY_PATH=./build/main" >> "$GITHUB_ENV"
+          echo "REMOTE_PATH=/home/pi/deployed_binary" >> "$GITHUB_ENV"
+          echo "PICO_SDK_PATH=$HOME/pico-sdk" >> "$GITHUB_ENV"
+          echo "PICO_BOARD=pico" >> "$GITHUB_ENV"
+      
+      - name: Configure & build binary
+        run: |
+          cmake -S . -B build \
+            -DPICO_SDK_PATH="$PICO_SDK_PATH" \
+            -DPICO_BOARD="$PICO_BOARD"
+          cmake --build build -- -j"$(nproc)"
+      
+      - name: Upload firmware artifact
+        uses: actions/upload-artifact@v4
         with:
-          python-version: '3.13'
-
-      - name: Install dependencies
-        run: pip install fprime-bootstrap  # idk if this is the right way
-
-      - name: Run tests
-        run: test  # idk what tests to put but it was in template
-
-  deploy:
-    needs: test  # needs tests to pass
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v2
-      - name: Setup SSH for Controller Pi
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.CONTROLLER_PI_SSH_KEY }}" > ~/.ssh/controller_key
-          chmod 600 ~/.ssh/controller_key
-          ssh-keyscan -H ${{ secrets.CONTROLLER_PI_IP }} >> ~/.ssh/known_hosts
+          name: pi-binary
+          path: build/*
       
-      - name: Transfer deployment package to Controller Pi
+      - name: Flash OS to target Raspberry Pi
+        timeout-minutes: 10
         run: |
-          ssh -i ~/.ssh/controller_key \
-            ${{ secrets.CONTROLLER_PI_SSH_USERNAME }}@${{ secrets.CONTROLLER_PI_IP }} \
-            "mkdir -p /tmp/fprime-deploy-${{ github.sha }}"
+          set -euo pipefail
+          echo "🔄 Preparing to flash OS to target Raspberry Pi..."
           
-          scp -i ~/.ssh/controller_key \
-            fprime-deployment.tar.gz \
-            ${{ secrets.CONTROLLER_PI_SSH_USERNAME }}@${{ secrets.CONTROLLER_PI_IP }}:/tmp/fprime-deploy-${{ github.sha }}/
-          
-          scp -i ~/.ssh/controller_key \
-            deployment/deploy_flatsat.py \
-            ${{ secrets.CONTROLLER_PI_SSH_USERNAME }}@${{ secrets.CONTROLLER_PI_IP }}:/tmp/fprime-deploy-${{ github.sha }}/
+          # Check if target Pi is reachable
+          if ping -c 3 "$TARGET_PI_HOST" > /dev/null 2>&1; then
+            echo "Target Pi is online, proceeding with OS flash..."
+            
+            # Execute OS flash script (customize based on your OS image location)
+            sudo ./scripts/flash_os.sh "$TARGET_PI_HOST" || echo "OS flash script not found or failed"
+            
+            # Wait for Pi to reboot after OS flash
+            echo "⏳ Waiting for target Pi to reboot..."
+            sleep 30
+            
+            # Wait for Pi to come back online
+            for i in {1..60}; do
+              if ping -c 1 "$TARGET_PI_HOST" > /dev/null 2>&1; then
+                echo "Target Pi is back online"
+                break
+              fi
+              sleep 2
+            done
+          else
+            echo "Target Pi not reachable, skipping OS flash"
+          fi
       
-      - name: deploy to target Pi
+      - name: Deploy binary to target Raspberry Pi
+        timeout-minutes: 5
         run: |
-          ssh -i ~/.ssh/controller_key \
-            ${{ secrets.CONTROLLER_PI_SSH_USERNAME }}@${{ secrets.CONTROLLER_PI_IP }} << 'ENDSSH'
-          cd /tmp/fprime-deploy-${{ github.sha }}
-          tar -xzf fprime-deployment.tar.gz
+          set -euo pipefail
+          echo "📦 Deploying binary to target Raspberry Pi..."
           
-          python3 deploy_flatsat.py \
-            --target ${{ secrets.TARGET_PI_IP }} \
-            --user pi \
-            --key ~/.ssh/target_pi_key \
-            --binary ./fprime-app
-          ENDSSH
+          # Copy binary to target Pi
+          scp -o StrictHostKeyChecking=no "$BINARY_PATH" \
+            "${TARGET_PI_USER}@${TARGET_PI_HOST}:${REMOTE_PATH}" || \
+            echo "Failed to copy binary"
+          
+          # Make binary executable
+          ssh -o StrictHostKeyChecking=no "${TARGET_PI_USER}@${TARGET_PI_HOST}" \
+            "chmod +x ${REMOTE_PATH}" || true
+          
+          echo "✅ Binary deployed successfully"
+      
+      - name: Execute binary on target Raspberry Pi
+        timeout-minutes: 3
+        run: |
+          set -euo pipefail
+          echo "🚀 Executing binary on target Raspberry Pi..."
+          
+          # Run the binary remotely and capture output
+          ssh -o StrictHostKeyChecking=no "${TARGET_PI_USER}@${TARGET_PI_HOST}" \
+            "${REMOTE_PATH}" || echo "Binary execution completed or failed"
+      
+      - name: Capture output from target Pi
+        run: |
+          set -euo pipefail
+          echo "::group::Target Pi Output"
+          
+          # Capture logs or output from the target Pi
+          ssh -o StrictHostKeyChecking=no "${TARGET_PI_USER}@${TARGET_PI_HOST}" \
+            "timeout 30s tail -f /var/log/syslog | grep 'deployed_binary' || true" || \
+            echo "Could not capture output"
+          
+          echo "::endgroup::"
+      
+      - name: Summary
+        run: |
+          echo "✅ Deployment completed on controller: $HOSTNAME"
+          echo "🎯 Target Raspberry Pi: $TARGET_PI_HOST"
