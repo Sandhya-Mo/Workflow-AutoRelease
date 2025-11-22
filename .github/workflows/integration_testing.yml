@@ -40,7 +40,7 @@ jobs:
         timeout-minutes: 10
         run: |
           set -euo pipefail
-          echo "🔄 Preparing to flash OS to target Raspberry Pi..."
+          echo "Preparing to flash OS to target Raspberry Pi..."
           
           # Check if target Pi is reachable
           if ping -c 3 "$TARGET_PI_HOST" > /dev/null 2>&1; then
@@ -50,7 +50,7 @@ jobs:
             sudo ./scripts/flash_os.sh "$TARGET_PI_HOST" || echo "OS flash script not found or failed"
             
             # Wait for Pi to reboot after OS flash
-            echo "⏳ Waiting for target Pi to reboot..."
+            echo "Waiting for target Pi to reboot..."
             sleep 30
             
             # Wait for Pi to come back online
@@ -69,7 +69,7 @@ jobs:
         timeout-minutes: 5
         run: |
           set -euo pipefail
-          echo "📦 Deploying binary to target Raspberry Pi..."
+          echo "Deploying binary to target Raspberry Pi..."
           
           # Copy binary to target Pi
           scp -o StrictHostKeyChecking=no "$BINARY_PATH" \
@@ -80,13 +80,13 @@ jobs:
           ssh -o StrictHostKeyChecking=no "${TARGET_PI_USER}@${TARGET_PI_HOST}" \
             "chmod +x ${REMOTE_PATH}" || true
           
-          echo "✅ Binary deployed successfully"
+          echo "Binary deployed successfully"
       
       - name: Execute binary on target Raspberry Pi
         timeout-minutes: 3
         run: |
           set -euo pipefail
-          echo "🚀 Executing binary on target Raspberry Pi..."
+          echo "Executing binary on target Raspberry Pi..."
           
           # Run the binary remotely and capture output
           ssh -o StrictHostKeyChecking=no "${TARGET_PI_USER}@${TARGET_PI_HOST}" \
@@ -106,5 +106,5 @@ jobs:
       
       - name: Summary
         run: |
-          echo "✅ Deployment completed on controller: $HOSTNAME"
-          echo "🎯 Target Raspberry Pi: $TARGET_PI_HOST"
+          echo "Deployment completed on controller: $HOSTNAME"
+          echo "Target Raspberry Pi: $TARGET_PI_HOST"
